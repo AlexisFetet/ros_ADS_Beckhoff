@@ -16,7 +16,7 @@ find_package(ros_ads_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} src/ADSDecode.cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE include)
-target_link_libraries(${PROJECT_NAME} "${cpp_typesupport_target}" ${rclcpp_LIBRARIES}) 
+target_link_libraries(${PROJECT_NAME} ${rclcpp_LIBRARIES}) 
 ament_target_dependencies(${PROJECT_NAME} rclcpp ros_ads_msgs)
 ament_export_targets(${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
@@ -33,6 +33,5 @@ install(
   RUNTIME DESTINATION bin
   INCLUDES DESTINATION include
 )
-
 
 ament_package()
