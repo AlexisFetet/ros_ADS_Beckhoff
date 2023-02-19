@@ -21,4 +21,27 @@ set(msg_files
 
 rosidl_generate_interfaces(${PROJECT_NAME} ${msg_files} DEPENDENCIES std_msgs)
 
+add_library(${PROJECT_NAME}_decode src/ADSDecode.cpp)
+target_include_directories(${PROJECT_NAME}_decode PRIVATE include)
+target_link_libraries(${PROJECT_NAME}_decode ${rclcpp_LIBRARIES}) 
+rosidl_target_interfaces(${PROJECT_NAME}_decode  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+ament_target_dependencies(${PROJECT_NAME}_decode rclcpp)
+ament_export_targets(${PROJECT_NAME}_decode HAS_LIBRARY_TARGET)
+
+add_dependencies(${PROJECT_NAME}_decode ${PROJECT_NAME})
+
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
+
+install(
+  TARGETS ${PROJECT_NAME}_decode
+  EXPORT ${PROJECT_NAME}_decode
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+  RUNTIME DESTINATION bin
+  INCLUDES DESTINATION include
+)
+
 ament_package()
