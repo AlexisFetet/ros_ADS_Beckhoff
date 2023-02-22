@@ -6,128 +6,120 @@
 using namespace ads_node;
 
 /**
- * @brief ADSNode::initialize initialize the parameters of the node and it's variables
- * @return 1 if the initialization failed
- * @return 0 otherwise
+ * @brief ADSNode::ADSNode initialize the parameters of the node and it's variables
  */
-bool ADSNode::initialize()
+ADSNode::ADSNode(rclcpp::NodeOptions options)
+    : Node("ads_node", options)
 {
-    ros::NodeHandle n;
-    ros::NodeHandle nprive("~");
-
-    if(nprive.hasParam("name"))
-    {
-      nprive.getParam("name", m_name);
-    }
-    else
-    {
-      ROS_ERROR("Param name unknown");
-      return 0;
-    }
-
-    if(nprive.hasParam("config_file"))
-    {
-        try { //get parameters from YAML file
-            nprive.getParam("config_file", m_config_file);
-            YAML::Node config = YAML::LoadFile(m_config_file);
-            if(config[m_name])
-            {
-                m_ADS.setLocalNetID(config[m_name]["localNetID"].as<string>());
-                m_ADS.setRemoteNetID(config[m_name]["remoteNetID"].as<string>());
-                m_ADS.setRemoteIPV4(config[m_name]["remoteIP"].as<string>());
-                m_rate_update = config[m_name]["refresh_rate"].as<int>();
-                m_rate_publish = config[m_name]["publish_rate"].as<int>();
-                m_rate_state = config[m_name]["state_rate"].as<int>();
-
-                if(config[m_name]["publish_on_timer"].size() != 0)
-                {
-                    auto onTimer = config[m_name]["publish_on_timer"].as<vector<string>>();
-                    for(auto & var: onTimer)
-                    {
-                        m_publish_on_timer_guard.lock();
-                        m_publish_on_timer[var] = pair<string, double>();
-                        m_publish_on_timer_guard.unlock();
-                        m_variables_guard.lock();
-                        m_variables[var] = pair<string, double>();
-                        m_variables_guard.unlock();
-                    }
-                }
-
-                if(config[m_name]["publish_on_event"].size() != 0)
-                {
-                    auto onEvent = config[m_name]["publish_on_event"].as<vector<string>>();
-                    for(auto & var: onEvent)
-                    {
-                        m_publish_on_event_guard.lock();
-                        m_publish_on_event[var] = pair<string, double>();
-                        m_publish_on_event_guard.unlock();
-                        m_variables_guard.lock();
-                        m_variables[var] = pair<string, double>();
-                        m_variables_guard.unlock();
-                    }
-                }
-            }
-        } catch (...)
-        {
-            ROS_ERROR("Invalid configuration file");
-        }
-
-    }
-    else {
-      ROS_ERROR("Error with configuration file");
-      return 0;
-    }
-
     try
     {
-        ROS_INFO_STREAM("GO FOR Init Route");
-        m_ADS.initRoute();
-        ROS_INFO("Init Route done");
-    }
-    catch(...)
-    {
-        ROS_ERROR("ERROR while connecting with ADS");
-        return 0;
-    }
-
-    try
-    {
-      ROS_INFO("Acquiring ADS variables");
-      m_ADS.acquireVariables();
-      ROS_INFO("ADS variables acquired");
-
-      ROS_INFO("Aliasing ADS variables");
-      m_ADS.setName(m_name);
-      m_ADS.setFile(m_config_file);
-      m_ADS.bindPLcVar();
-      ROS_INFO("Ready to communicate with the remote PLC via ADS.");
-    }
-    catch(AdsException e)
-    {
-      ROS_ERROR_STREAM(e.what());
-      ROS_ERROR("ERROR in mapping alias with ADS");
-      return 0;
-    }
-
-    try
-    {
-        m_subscriber = n.subscribe<ros_ads_msgs::ADS>("command", 10, boost::bind(&ADSNode::Subscriber, this, _1));
-        m_on_event_publisher = n.advertise<ros_ads_msgs::ADS>("report_event", 10);
-        m_on_timer_publisher = n.advertise<ros_ads_msgs::ADS>("report_timer", 10);
-        m_state_publisher = n.advertise<ros_ads_msgs::State>("state", 10);
+        m_sub_option.callback_group = mp_callback_group_publisher;
+        mp_subscriber = this->create_subscription<ros_ads_msgs::msg::Ads>(
+            "command", rclcpp::QoS(m_pub_queue_size), [this](ros_ads_msgs::msg::Ads::SharedPtr msg)
+            { Subscriber(msg); },
+            m_sub_option);
     }
     catch (...)
     {
-        ROS_ERROR("ERROR in creating subscriber");
-        return 0;
+        RCLCPP_ERROR(get_logger(), "ERROR in creating subscriber");
+    }
+    try
+    { // get parameters from YAML file
+        YAML::Node config = YAML::LoadFile(m_config_file);
+        if (config[m_name])
+        {
+            m_ADS.setLocalNetID(config[m_name]["localNetID"].as<string>());
+            m_ADS.setRemoteNetID(config[m_name]["remoteNetID"].as<string>());
+            m_ADS.setRemoteIPV4(config[m_name]["remoteIP"].as<string>());
+            m_rate_update = config[m_name]["refresh_rate"].as<int>();
+            m_rate_publish = config[m_name]["publish_rate"].as<int>();
+            m_rate_state = config[m_name]["state_rate"].as<int>();
+
+            if (config[m_name]["publish_on_timer"].size() != 0)
+            {
+                auto onTimer = config[m_name]["publish_on_timer"].as<std::vector<std::string>>();
+                for (auto &var : onTimer)
+                {
+                    m_publish_on_timer_guard.lock();
+                    m_publish_on_timer[var] = pair<string, double>();
+                    m_publish_on_timer_guard.unlock();
+                    m_variables_guard.lock();
+                    m_variables[var] = pair<string, double>();
+                    m_variables_guard.unlock();
+                }
+            }
+
+            if (config[m_name]["publish_on_event"].size() != 0)
+            {
+                auto onEvent = config[m_name]["publish_on_event"].as<vector<string>>();
+                for (auto &var : onEvent)
+                {
+                    m_publish_on_event_guard.lock();
+                    m_publish_on_event[var] = pair<string, double>();
+                    m_publish_on_event_guard.unlock();
+                    m_variables_guard.lock();
+                    m_variables[var] = pair<string, double>();
+                    m_variables_guard.unlock();
+                }
+            }
+        }
+        mp_publisher_timer = this->create_wall_timer(
+            std::chrono::milliseconds(int(1000. / config[m_name]["publish_rate"].as<int>())),
+            [this]()
+            { publishOnTimer(); },
+            mp_callback_group_publisher);
+
+        mp_update_timer = this->create_wall_timer(
+            std::chrono::milliseconds(int(1000. / config[m_name]["refresh_rate"].as<int>())),
+            [this]()
+            { update(); },
+            mp_callback_group_update);
+
+        mp_state_timer = this->create_wall_timer(
+            std::chrono::milliseconds(int(1000. / config[m_name]["state_rate"].as<int>())),
+            [this]()
+            { publishState(); },
+            mp_callback_group_state);
+    }
+    catch (...)
+    {
+        RCLCPP_ERROR(get_logger(), "Invalid configuration file");
     }
 
-    m_timer_thread = make_shared<boost::thread>(&ADSNode::publishOnTimer,this, m_rate_publish);
-    m_update_thread = make_shared<boost::thread>(&ADSNode::update,this, m_rate_update);
-    m_checker_thread = make_shared<boost::thread>(&ADSNode::publishOnEvent,this, m_rate_update);
-    m_state_thread = make_shared<boost::thread>(&ADSNode::publishState,this, m_rate_state);
+    try
+    {
+        RCLCPP_INFO_STREAM(get_logger(), "GO FOR Init Route");
+        m_ADS.initRoute();
+        RCLCPP_INFO(get_logger(), "Init Route done");
+    }
+    catch (...)
+    {
+        RCLCPP_ERROR(get_logger(), "ERROR while connecting with ADS");
+    }
 
-    return 1;
+    try
+    {
+        RCLCPP_INFO(get_logger(), "Acquiring ADS variables");
+        m_ADS.acquireVariables();
+        RCLCPP_INFO(get_logger(), "ADS variables acquired");
+
+        RCLCPP_INFO(get_logger(), "Aliasing ADS variables");
+        m_ADS.setName(m_name);
+        m_ADS.setFile(m_config_file);
+        m_ADS.bindPLcVar();
+        RCLCPP_INFO(get_logger(), "Ready to communicate with the remote PLC via ADS.");
+    }
+    catch (AdsException e)
+    {
+        RCLCPP_ERROR_STREAM(get_logger(), e.what());
+        RCLCPP_ERROR(get_logger(), "ERROR in mapping alias with ADS");
+    }
+
+    mp_checker_timer = this->create_wall_timer(
+        0s, [this]()
+        { publishOnEvent(); },
+        mp_callback_group_checker);
+    mp_checker_timer->cancel();
 }
 
 /**
@@ -137,227 +129,207 @@ bool ADSNode::initialize()
  *
  * @param timer_rate rate to update at
  */
-void ADSNode::update(int timer_rate)
+void ADSNode::update()
 {
-    auto loop_rate_update = ros::Rate(timer_rate);
-    while(ros::ok())
+    mp_update_timer->cancel();
+    m_variables_guard.lock();
+    try
     {
-        m_variables_guard.lock();
-        try
+        m_ADS.connectionCheck();
+        if (m_ADS.getState())
         {
-            m_ADS.connectionCheck();
-            if(m_ADS.getState())
-            {
-                m_ADS.updateMemory();
-                auto variables_map = m_ADS.getVariablesMap();
-                for(auto &[name, pair]: variables_map)
-                { //cast as double for the message
-                    m_variables[name].first = pair.first;
-                    switch (pair.second.index())
-                    {
-                    case ros_ads_msgs::BOOL:
-                    {
-                        m_variables[name].second = static_cast<double>(get<bool>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::UINT8_T:
-                    {
-                        m_variables[name].second = static_cast<double>(get<uint8_t>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::INT8_T:
-                    {
-                        m_variables[name].second = static_cast<double>(get<int8_t>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::UINT16_T:
-                    {
-                        m_variables[name].second = static_cast<double>(get<uint16_t>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::INT16_T:
-                    {
-                        m_variables[name].second = static_cast<double>(get<int16_t>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::UINT32_T:
-                    {
-                        m_variables[name].second = static_cast<double>(get<uint32_t>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::INT32_T:
-                    {
-                        m_variables[name].second = static_cast<double>(get<int32_t>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::INT64_T:
-                    {
-                        m_variables[name].second = static_cast<double>(get<int64_t>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::FLOAT:
-                    {
-                        m_variables[name].second = static_cast<double>(get<float>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::DOUBLE:
-                    {
-                        m_variables[name].second = static_cast<double>(get<double>(pair.second));
-                        break;
-                    }
-                    case ros_ads_msgs::DATE:
-                    {
-                        tm temp = get<tm>(pair.second);
-                        m_variables[name].second = static_cast<double>(mktime(&temp));
-                        break;
-                    }
-                    default:
-                    {
-
-                    }
-                    }
-                    m_publish_on_timer_guard.lock();
-                    if(m_publish_on_timer.find(name) != m_publish_on_timer.end() && m_ADS.getState())
-                    {
-                        m_publish_on_timer[name] = m_variables[name];
-                    }
-                    m_publish_on_timer_guard.unlock();
+            m_ADS.updateMemory();
+            auto variables_map = m_ADS.getVariablesMap();
+            for (auto &[name, pair] : variables_map)
+            { // cast as double for the message
+                m_variables[name].first = pair.first;
+                switch (pair.second.index())
+                {
+                case ros_ads_msgs::BOOL:
+                {
+                    m_variables[name].second = static_cast<double>(get<bool>(pair.second));
+                    break;
                 }
+                case ros_ads_msgs::UINT8_T:
+                {
+                    m_variables[name].second = static_cast<double>(get<uint8_t>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::INT8_T:
+                {
+                    m_variables[name].second = static_cast<double>(get<int8_t>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::UINT16_T:
+                {
+                    m_variables[name].second = static_cast<double>(get<uint16_t>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::INT16_T:
+                {
+                    m_variables[name].second = static_cast<double>(get<int16_t>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::UINT32_T:
+                {
+                    m_variables[name].second = static_cast<double>(get<uint32_t>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::INT32_T:
+                {
+                    m_variables[name].second = static_cast<double>(get<int32_t>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::INT64_T:
+                {
+                    m_variables[name].second = static_cast<double>(get<int64_t>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::FLOAT:
+                {
+                    m_variables[name].second = static_cast<double>(get<float>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::DOUBLE:
+                {
+                    m_variables[name].second = static_cast<double>(get<double>(pair.second));
+                    break;
+                }
+                case ros_ads_msgs::DATE:
+                {
+                    tm temp = get<tm>(pair.second);
+                    m_variables[name].second = static_cast<double>(mktime(&temp));
+                    break;
+                }
+                default:
+                {
+                }
+                }
+                m_publish_on_timer_guard.lock();
+                if (m_publish_on_timer.find(name) != m_publish_on_timer.end() && m_ADS.getState())
+                {
+                    m_publish_on_timer[name] = m_variables[name];
+                }
+                m_publish_on_timer_guard.unlock();
             }
         }
-        catch (...)
-        {
-            ROS_ERROR("fail timer CB");
-        }
-        m_variables_guard.unlock();
-        loop_rate_update.sleep();
     }
+    catch (...)
+    {
+        RCLCPP_ERROR(get_logger(), "fail timer CB");
+    }
+    m_variables_guard.unlock();
+
+    mp_checker_timer->reset(); // Look for an event
+    mp_update_timer->reset();
 }
 
 /**
  * @brief ADSNode::publishState publish state periodically
  * @param timer_rate rate to publish at
  */
-void ADSNode::publishState(int timer_rate)
+void ADSNode::publishState()
 {
-    auto loop_rate_state = ros::Rate(timer_rate);
-    while(ros::ok())
-    {
-        m_state_msg.header.stamp = ros::Time::now();
-        m_state_msg.state = m_ADS.getState();
-        m_state_msg.error = m_ADS.getADSState();
-        m_state_publisher.publish(m_state_msg);
-        loop_rate_state.sleep();
-    }
+    m_state_msg.header.stamp = now();
+    m_state_msg.state = m_ADS.getState();
+    m_state_msg.error = m_ADS.getADSState();
+    mp_state_publisher->publish(m_state_msg);
 }
 
 /**
  * @brief ADSNode::publishOnEvent publish variables if an event occured
  * @param timer_rate rate to verify if an event occured at
  */
-void ADSNode::publishOnEvent(int timer_rate)
+void ADSNode::publishOnEvent()
 {
-    auto loop_rate_check = ros::Rate(timer_rate);
-    while(ros::ok())
+    mp_checker_timer->cancel();
+    try
     {
-        try
+        if (m_ADS.getState())
         {
-            if(m_ADS.getState())
+            m_publish_on_event_guard.lock();
+            auto publish_on_event = m_publish_on_event;
+            m_publish_on_event_guard.unlock();
+            m_variables_guard.lock();
+            auto variables = m_variables;
+            m_variables_guard.unlock();
+
+            m_publish = false;
+            for (auto &[key, pair_] : publish_on_event)
             {
-                m_publish_on_event_guard.lock();
-                auto publish_on_event = m_publish_on_event;
-                m_publish_on_event_guard.unlock();
-                m_variables_guard.lock();
-                auto variables = m_variables;
-                m_variables_guard.unlock();
-
-                m_publish = false;
-                for(auto &[key, pair_] : publish_on_event)
+                m_checker_temp_value = variables[key];
+                if (pair_ != m_checker_temp_value) // A change has occured
                 {
-                    m_checker_temp_value = variables[key];
-                    if(pair_ != m_checker_temp_value) // A change has occured
-                    {
-                        m_publish_on_event_guard.lock();
-                        m_publish_on_event[key] = m_checker_temp_value; // Update value
-                        m_publish_on_event_guard.unlock();
+                    m_publish_on_event_guard.lock();
+                    m_publish_on_event[key] = m_checker_temp_value; // Update value
+                    m_publish_on_event_guard.unlock();
 
-                        if(!m_publish)
-                        {
-                            m_publish = true;
-                        }
-                    }
-                }
-                if (m_publish) // Publish if a change occured
-                {
-                    m_on_event_msg.header.stamp = ros::Time::now();
-                    m_on_event_msg.varNames = vector<string>();
-                    m_on_event_msg.varTypes = vector<string>();
-                    m_on_event_msg.varValues = vector<double>();
-
-                    for (auto &[key, pair] : publish_on_event)
+                    if (!m_publish)
                     {
-                        m_on_event_msg.varNames.push_back(key);
-                        auto type = pair.first;
-                        m_on_event_msg.varTypes.push_back(type);
-                        auto value = pair.second;
-                        m_on_event_msg.varValues.push_back(value);
-                    }
-                    if(m_on_event_msg.varNames.size() !=0)
-                    {
-                        m_on_event_publisher.publish(m_on_event_msg);
+                        m_publish = true;
                     }
                 }
             }
-        }
-        catch(...)
-        {
-            ROS_ERROR("fail checker CB");
-        }
-        loop_rate_check.sleep();
-    }
+            if (m_publish) // Publish if a change occured
+            {
+                m_on_event_msg.header.stamp = now();
+                m_on_event_msg.var_names = std::vector<std::string>();
+                m_on_event_msg.var_types = std::vector<std::string>();
+                m_on_event_msg.var_values = std::vector<double>();
 
+                for (auto &[key, pair] : publish_on_event)
+                {
+                    m_on_event_msg.var_names.push_back(key);
+                    auto type = pair.first;
+                    m_on_event_msg.var_types.push_back(type);
+                    auto value = pair.second;
+                    m_on_event_msg.var_values.push_back(value);
+                }
+                if (m_on_event_msg.var_names.size() != 0)
+                {
+                    mp_on_event_publisher->publish(m_on_event_msg);
+                }
+            }
+        }
+    }
+    catch (...)
+    {
+        RCLCPP_ERROR(get_logger(), "fail checker CB");
+    }
 }
 
 /**
  * @brief ADSNode::publishOnTimer publish variables periodically
  * @param timer_rate rate to publish at
  */
-void ADSNode::publishOnTimer(int timer_rate)
+void ADSNode::publishOnTimer()
 {
-
-    auto loop_rate_pub = ros::Rate(timer_rate);
-    while(ros::ok())
+    try
     {
-        try
+        m_on_timer_msg.header.stamp = now();
+        m_on_timer_msg.var_names = std::vector<std::string>();
+        m_on_timer_msg.var_types = std::vector<std::string>();
+        m_on_timer_msg.var_values = std::vector<double>();
+
+        m_publish_on_timer_guard.lock();
+        auto publish_on_timer = m_publish_on_timer;
+        m_publish_on_timer_guard.unlock();
+
+        for (auto &[name, pair] : publish_on_timer)
         {
-            m_on_timer_msg.header.stamp = ros::Time::now();
-            m_on_timer_msg.varNames = vector<string>();
-            m_on_timer_msg.varTypes = vector<string>();
-            m_on_timer_msg.varValues = vector<double>();
-
-            m_publish_on_timer_guard.lock();
-            auto publish_on_timer = m_publish_on_timer;
-            m_publish_on_timer_guard.unlock();
-            
-            for(auto &[name, pair]: publish_on_timer)
-            {
-                m_on_timer_msg.varNames.push_back(name);
-                m_on_timer_msg.varTypes.push_back(pair.first);
-                m_on_timer_msg.varValues.push_back(pair.second);
-            }
-
-
-            if(m_on_timer_msg.varNames.size() != 0)
-            {
-                m_on_timer_publisher.publish(m_on_timer_msg);
-            }
-            loop_rate_pub.sleep();
-        }
-        catch(...)
-        {
-            ROS_ERROR("fail pub CB");
+            m_on_timer_msg.var_names.push_back(name);
+            m_on_timer_msg.var_types.push_back(pair.first);
+            m_on_timer_msg.var_values.push_back(pair.second);
         }
 
+        if (m_on_timer_msg.var_names.size() != 0)
+        {
+            mp_on_timer_publisher->publish(m_on_timer_msg);
+        }
+    }
+    catch (...)
+    {
+        RCLCPP_ERROR(get_logger(), "fail pub CB");
     }
 }
 
@@ -366,16 +338,17 @@ void ADSNode::publishOnTimer(int timer_rate)
  * @param msg the command message
  * @return true if the command was successfully sent
  */
-bool ADSNode::Subscriber(const ros_ads_msgs::ADS::ConstPtr &msg)
+bool ADSNode::Subscriber(ros_ads_msgs::msg::Ads::SharedPtr msg)
 {
-    m_state_publisher.publish(m_state_msg);
+    mp_state_publisher->publish(m_state_msg);
     bool result = true;
     auto command = ros_ads_msgs::decode(msg);
 
-    try {
-        if(m_ADS.getState())
+    try
+    {
+        if (m_ADS.getState())
         {
-            for (auto &[name, value]: command)
+            for (auto &[name, value] : command)
             {
                 m_ADS.adsWriteValue(name, value);
             }
@@ -391,14 +364,14 @@ bool ADSNode::Subscriber(const ros_ads_msgs::ADS::ConstPtr &msg)
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "ros_ads_node");
-    ADSNode *node = new ADSNode();
+    rclcpp::init(argc, argv);
 
-    node->initialize();
+    auto node{std::make_shared<ads_node::ADSNode>()};
 
-    while(ros::ok())
-    {
-        ros::spinOnce();
-    }
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
+    executor.spin();
+
+    rclcpp::shutdown();
     return 0;
 }

@@ -7,7 +7,6 @@
 #include "../lib/ADS/AdsLib/AdsLib.h"
 #include "../lib/ADS/AdsLib/AdsVariable.h"
 #include <time.h>
-#include <boost/thread/thread.hpp>
 #include <variant>
 #include <mutex>
 
